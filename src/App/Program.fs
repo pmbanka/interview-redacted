@@ -1,4 +1,5 @@
 ﻿open System
+open System.IO
 open System.Collections.Generic
 
 type MagazineName = string
@@ -9,13 +10,23 @@ type MaterialCount = int
 type InputRecord = {
     MaterialName : MaterialName
     MaterialId : MaterialId
-    Stock : {| MagazineName : MagazineName; Count : MaterialCount |} list
+    Magazines : {| MagazineName : MagazineName; Count : MaterialCount |} list
 }
 
-[<EntryPoint>]
-let main argv =
-    let input = """
-# Material inventory initial state as of Jan 01 2018
+type OutputRecord = {
+    Materials: SortedDictionary<MaterialId,MaterialCount>
+    MagazineName: MagazineName
+    TotalCount: MaterialCount 
+}
+
+module Input = 
+
+    let getFrom (i:TextReader) =
+        Seq.initInfinite (fun _ -> i.ReadLine())
+        |> Seq.takeWhile (not << isNull)
+
+    let getFakeReader () =
+        let input = """# Material inventory initial state as of Jan 01 2018
 # New materials
 Cherry Hardwood Arched Door - PS;COM-100001;WH-A,5|WH-B,10
 Maple Dovetail Drawerbox;COM-124047;WH-A,15
@@ -27,56 +38,62 @@ Veneer - Charter Industries - 3M Adhesive Backed - Cherry 10mm - Paper Back;3M-C
 Veneer - Cherry Rotary 1 FSC;COM-123823;WH-C,10
 MDF, CARB2, 1 1/8";COM-101734;WH-C,8
 """
+        new StringReader(input)
 
-    let input = 
-        input.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
-        |> Array.where (fun l -> not (l.StartsWith '#'))
-        |> Array.map (fun l -> 
-            let splitted = l.Split ';'
-            let matName = splitted.[0]
-            let matId = splitted.[1]
-            let stock = 
+    let toStructured (input:string seq) =
+        input 
+        |> Seq.where (fun l -> not (l.StartsWith '#'))
+        |> Seq.map (fun l -> 
+            let splitted = l.Split ';'  
+            // we assume that the input rows are well formatted
+            // so we use unsafe access to array elements
+            let magazines = 
                 splitted.[2].Split ('|', StringSplitOptions.RemoveEmptyEntries)
                 |> Array.map (fun pair -> let s = pair.Split(',') in {| MagazineName = s.[0]; Count = int s.[1] |})
                 |> List.ofArray
-            { MaterialName = matName; MaterialId = matId; Stock = stock })
-    
-    let step1 = Dictionary<MagazineName, SortedDictionary<MaterialId,MaterialCount>>()
-    for inputRecord in input do
-        for stockRecord in inputRecord.Stock do
-            match step1.TryGetValue stockRecord.MagazineName with
-            | true, materials -> 
-                materials.[inputRecord.MaterialId] <-
-                    match materials.TryGetValue inputRecord.MaterialId with
-                    | true, count -> count + stockRecord.Count
-                    | false, _ -> stockRecord.Count
-            | false, _  -> 
-                step1.[stockRecord.MagazineName] <- SortedDictionary(dict [inputRecord.MaterialId,stockRecord.Count])
-    let step2 =  
-        [| 
-            for entry in step1 do
-                {|
-                    MagazineName = entry.Key
-                    TotalCount = entry.Value |> Seq.sumBy (fun x -> x.Value)
-                    Entries = entry.Value
-                |}
-        |] |> Array.sortByDescending(fun entry -> entry.TotalCount, entry.MagazineName)
+            { MaterialName = splitted.[0]; MaterialId = splitted.[1]; Magazines = magazines })
 
-    for entry in step2 do
-        printfn "%s (total %d)" entry.MagazineName entry.TotalCount
-        for KeyValue(name, count) in entry.Entries do
-            printfn "%s: %d" name count
-        printfn ""
-    
+module Output =
 
-        // let magazines = 
-        //     lines 
-        //     |> Array.collect (fun l -> l.Stock |> Array.map (fun s -> s.Magazine))
-        //     |> Array.distinct
-        
-    ()
+    let writeTo (target: TextWriter) (records:OutputRecord list) =
+        for record in records do
+            target.WriteLine(sprintf "%s (total %d)" record.MagazineName record.TotalCount)
+            for KeyValue(name, count) in record.Materials do
+                target.WriteLine(sprintf "%s: %d" name count)
+            target.WriteLine()
+        target.Flush()
 
+module Processing =
 
+    let reshapeData (input:InputRecord seq) =
+        // we first combine data per magazines
+        let shape1 = Dictionary<MagazineName, SortedDictionary<MaterialId,MaterialCount>>()
+        for inputRecord in input do
+            for magazine in inputRecord.Magazines do
+                match shape1.TryGetValue magazine.MagazineName with
+                | true, materials -> 
+                    materials.[inputRecord.MaterialId] <-
+                        match materials.TryGetValue inputRecord.MaterialId with
+                        | true, count -> count + magazine.Count
+                        | _ -> magazine.Count
+                | _  -> 
+                    shape1.[magazine.MagazineName] <- SortedDictionary(dict [inputRecord.MaterialId, magazine.Count])
+        // and then sort the magazines according to spec while keeping total count
+        let shape2 = 
+            [| 
+                for KeyValue(magazineName, materials) in shape1 do
+                   { MagazineName = magazineName
+                     TotalCount = materials |> Seq.sumBy (fun x -> x.Value)
+                     Materials = materials }
+            |] 
+            |> Array.sortByDescending(fun entry -> entry.TotalCount, entry.MagazineName)
+            |> List.ofArray
+        shape2
 
-    printfn "Hello World from F#!"
-    0 // return an integer exit code
+[<EntryPoint>]
+let main argv =
+    Input.getFrom Console.In // replace Console.In with (Input.getFakeReader ()) for quick testing
+    |> Input.toStructured
+    |> Processing.reshapeData
+    |> Output.writeTo Console.Out
+    0
