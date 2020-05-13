@@ -20,25 +20,9 @@ type OutputRecord = {
 }
 
 module Input = 
-
     let getFrom (i:TextReader) =
         Seq.initInfinite (fun _ -> i.ReadLine())
-        |> Seq.takeWhile (not << isNull)
-
-    let getFakeReader () =
-        let input = """# Material inventory initial state as of Jan 01 2018
-# New materials
-Cherry Hardwood Arched Door - PS;COM-100001;WH-A,5|WH-B,10
-Maple Dovetail Drawerbox;COM-124047;WH-A,15
-Generic Wire Pull;COM-123906c;WH-A,10|WH-B,6|WH-C,2
-Yankee Hardware 110 Deg. Hinge;COM-123908;WH-A,10|WH-B,11
-# Existing materials, restocked
-Hdw Accuride CB0115-CASSRC - Locking Handle Kit - Black;CB0115-CASSRC;WH-C,13|WH-B,5
-Veneer - Charter Industries - 3M Adhesive Backed - Cherry 10mm - Paper Back;3M-Cherry-10mm;WH-A,10|WH-B,1
-Veneer - Cherry Rotary 1 FSC;COM-123823;WH-C,10
-MDF, CARB2, 1 1/8";COM-101734;WH-C,8
-"""
-        new StringReader(input)
+        |> Seq.takeWhile (not << String.IsNullOrEmpty)
 
     let toStructured (input:string seq) =
         input 
@@ -54,7 +38,6 @@ MDF, CARB2, 1 1/8";COM-101734;WH-C,8
             { MaterialName = splitted.[0]; MaterialId = splitted.[1]; Magazines = magazines })
 
 module Output =
-
     let writeTo (target: TextWriter) (records:OutputRecord list) =
         for record in records do
             target.WriteLine(sprintf "%s (total %d)" record.MagazineName record.TotalCount)
@@ -64,7 +47,6 @@ module Output =
         target.Flush()
 
 module Processing =
-
     let reshapeData (input:InputRecord seq) =
         // we first combine data per magazines
         let shape1 = Dictionary<MagazineName, SortedDictionary<MaterialId,MaterialCount>>()
@@ -90,10 +72,25 @@ module Processing =
             |> List.ofArray
         shape2
 
+module Fakes =
+    let getFakeReader () =
+        new StringReader("""# Material inventory initial state as of Jan 01 2018
+# New materials
+Cherry Hardwood Arched Door - PS;COM-100001;WH-A,5|WH-B,10
+Maple Dovetail Drawerbox;COM-124047;WH-A,15
+Generic Wire Pull;COM-123906c;WH-A,10|WH-B,6|WH-C,2
+Yankee Hardware 110 Deg. Hinge;COM-123908;WH-A,10|WH-B,11
+# Existing materials, restocked
+Hdw Accuride CB0115-CASSRC - Locking Handle Kit - Black;CB0115-CASSRC;WH-C,13|WH-B,5
+Veneer - Charter Industries - 3M Adhesive Backed - Cherry 10mm - Paper Back;3M-Cherry-10mm;WH-A,10|WH-B,1
+Veneer - Cherry Rotary 1 FSC;COM-123823;WH-C,10
+MDF, CARB2, 1 1/8";COM-101734;WH-C,8
+""")
+
 [<EntryPoint>]
 let main argv =
-    Input.getFrom Console.In // replace Console.In with (Input.getFakeReader ()) for quick testing
+    Input.getFrom stdin // replace stdin with (Fakes.getFakeReader ()) for quick testing
     |> Input.toStructured
     |> Processing.reshapeData
-    |> Output.writeTo Console.Out
+    |> Output.writeTo stdout
     0
